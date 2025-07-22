@@ -1,0 +1,42 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      # Define your AWS region and account ID as environment variables if not already set
+      # You can also pass these as environment variables in CodeBuild project settings
+      - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - AWS_DEFAULT_REGION="us-east-1" # Replace with your region
+
+      # Log in to Amazon ECR
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+
+      # Define your ECR repository URI and a unique image tag
+      - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/my-app-repo
+      - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7) # Using commit hash for tag
+
+  build:
+    commands:
+      # Build the Docker image
+      - echo Building the Docker image...
+      - docker build -t $REPOSITORY_URI:latest .
+      - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG
+
+  post_build:
+    commands:
+      # Push the Docker image to ECR
+      - echo Pushing the Docker image...
+      - docker push $REPOSITORY_URI:latest
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+
+      # Create the imagedefinitions.json file
+      # IMPORTANT: "my-web-container" MUST match the "Container name"
+      # you defined in your ECS Task Definition (Step 4).
+      - echo Creating imagedefinitions.json...
+      - printf '[{"name":"my-web-container","imageUri":"%s"}]' $REPOSITORY_URI:$IMAGE_TAG > imagedefinitions.json
+
+artifacts:
+  files:
+    # This tells CodeBuild to include imagedefinitions.json in the output artifact
+    - imagedefinitions.json
